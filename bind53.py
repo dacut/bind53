@@ -12,6 +12,7 @@ from time import sleep, time
 
 from boto3.session import Session
 from dns.resolver import NXDOMAIN, query as dns_query
+from dns.rdatatype import A
 from six.moves import cStringIO as StringIO
 
 log = getLogger("bind53")
@@ -76,21 +77,21 @@ class DNSAliasRecord(DNSRecord):
 
     def resolve(self):
         """
-        Attempt to resolve this name once.
+        Attempt to resolve this name once, following CNAME chains if necessary.
         """
         ttl = self.min_resolution_delay
 
         try:
-            result = dns_query(self.target, tcp=True)
-
-            for answer in result.response.answer:
-                for item in answer.items:
-                    self.values.add(item.address)
-                    log.debug("Resolved %s (%s): %s", self.name, self.target,
-                              item.address)
-                ttl = max(ttl, answer.ttl)
-                if self.ttl is None:
-                    self.ttl = answer.ttl
+            log.debug("Query: %s", self.target)
+            answer = dns_query(self.target, rdtype=A, tcp=True)
+            log.debug("Answer: %s", answer)
+            for item in answer.rrset.items:
+                self.values.add(item.address)
+                log.debug("Resolved %s (%s): %s", self.name, self.target,
+                          item.address)
+            ttl = max(ttl, answer.ttl)
+            if self.ttl is None:
+                self.ttl = answer.ttl
         except NXDOMAIN as e:
             log.warning("Failed to resolve %s (%s): %s", self.name,
                         self.target, e)
@@ -289,10 +290,6 @@ Convert a Route 53 hosted zone to a BIND zone file.
 Options:
     -h | --help
         Print this usage information.
-
-    -k | --kick
-        Restart (kick) the BIND server after writing the zone files. This is
-        done only if all hosted zones were successfully retrieved.
 
     -o <filename> | --output <filename>
         Write output to the given file. Defaults to stdout.
