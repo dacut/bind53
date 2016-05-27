@@ -1,0 +1,237 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Serve Route 53 hosted zones over BIND",
+
+    "Metadata": {
+        "LastUpdated": "2016-05-25"
+    },
+
+    "Mappings": {
+        "AmazonLinux": {
+            "ap-northeast-1":   { "HVM64": "ami-29160d47" },
+            "ap-northeast-2":   { "HVM64": "ami-cf32faa1" },
+            "ap-southeast-1":   { "HVM64": "ami-1ddc0b7e" },
+            "ap-southeast-2":   { "HVM64": "ami-0c95b86f" },
+            "eu-central-1":     { "HVM64": "ami-d3c022bc" },
+            "eu-west-1":        { "HVM64": "ami-b0ac25c3" },
+            "sa-east-1":        { "HVM64": "ami-fb890097" },
+            "us-east-1":        { "HVM64": "ami-f5f41398" },
+            "us-gov-west-1":    { "HVM64": "ami-e3ad1282" },
+            "us-west-1":        { "HVM64": "ami-6e84fa0e" },
+            "us-west-2":        { "HVM64": "ami-d0f506b0" }
+        }
+    },
+
+    "Parameters": {
+        "KeyName": {
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "Description": "EC2 keypair used to log into the instance for maintenance.",
+            "MinLength": "1"
+        },
+
+        "HostedZones": {
+            "Type": "String",
+            "Description": "A comma-separated list of DNS domains to host from Route 53.",
+            "MinLength": "4"
+        },
+
+        "VpcName": {
+            "Type": "String",
+            "Description": "Name of the VPC to create.",
+            "MinLength": "1",
+            "Default": "Bind53"
+        },
+
+        "VpcCidrBlock": {
+            "Type": "String",
+            "Description": "The network CIDR range to use for the VPC.",
+            "Default": "192.168.188.0/24"
+        },
+
+        "Subnet1CidrBlock": {
+            "Type": "String",
+            "Description": "The network CIDR range to use for the first subnet.",
+            "Default": "192.168.188.0/25"
+        },
+
+        "Subnet2CidrBlock": {
+            "Type": "String",
+            "Description": "The network CIDR range to use for the second subnet.",
+            "Default": "192.168.188.128/25"
+        },
+
+        "SshCidrRange": {
+            "Type": "String",
+            "Description": "The network CIDR range that can access the SSH port.",
+            "Default": "192.174.32.0/19"
+        },
+
+        "InstanceType": {
+            "Type": "String",
+            "Default": "t2.nano",
+            "Description": "The instance type to use.",
+            "AllowedValues": [
+                "c3.large", "c3.xlarge", "c3.2xlarge", "c3.4xlarge", "c3.8xlarge",
+                "c4.large", "c4.xlarge", "c4.2xlarge", "c4.4xlarge", "c4.8xlarge",
+                "cc2.8xlarge",
+                "cr1.8xlarge",
+                "d2.xlarge", "d2.2xlarge", "d2.4xlarge", "d2.8xlarge",
+                "g2.2xlarge", "g2.8xlarge",
+                "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge",
+                "m3.medium", "m3.large", "m3.xlarge", "m3.2xlarge",
+                "m4.large", "m4.xlarge", "m4.2xlarge", "m4.4xlarge", "m4.10xlarge",
+                "r3.large", "r3.xlarge", "r3.2xlarge", "r3.4xlarge", "r3.8xlarge",
+                "t2.nano", "t2.micro", "t2.small", "t2.medium", "t2.large"
+            ]
+        }
+    },
+
+    "Resources": {
+        "Vpc": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CideBlock": { "Ref": "VpcCidrBlock" },
+                "EnableDnsSupport": "true",
+                "EnableDnsHostnames": "true",
+                "InstanceTenancy": "default",
+                "Tags": [ { "Key": "Name", "Value": {"Ref":"VpcName"} } ]
+            }
+        },
+
+        "VpcIgw": {
+            "Type": "AWS::EC2::InternetGateway",
+            "Properties": {
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": { "Fn::Join": [ "", "IGW for ", {"Ref":"VpcName"} ] }
+                    }
+                ]
+            }
+        },
+
+        "VpcIgwAttachment": {
+            "Type": "AWS::EC2::VPCGatewayAttachment",
+            "Properties": {
+                "InternetGatewayId": {"Ref":"VpcIgw"},
+                "VpcId": {"Ref":"Vpc"}
+            }
+        },
+
+        "Subnet1": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": { "Fn::Join": [ "", [ {"Ref":"AWS::Region"}, "a" ] ] },
+                "CidrBlock": { "Ref": "Subnet1CidrBlock" },
+                "MapPublicIpOnLaunch": "false",
+                "VpcId": { "Ref": "VPC" }
+            }
+        },
+
+        "Subnet2": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": { "Fn::Join": [ "", [ {"Ref":"AWS::Region"}, "b" ] ] },
+                "CidrBlock": {"Ref":"Subnet2CidrBlock"},
+                "MapPublicIpOnLaunch": "false",
+                "VpcId": {"Ref":"VPC"}
+            }
+        },
+
+        "VpcRouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {"Ref":"Vpc"}
+            }
+        },
+
+        "VpcInternetRoute": {
+            "Type": "AWS::EC2::Route",
+            "Properties": {
+                "DestinationCidrBlock": "0.0.0.0/0",
+                "GatewayId": {"Ref":"VpcIgw"},
+                "RouteTableId": {"Ref":"VpcRouteTable"}
+            }
+        },
+
+        "IamRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": { "Service": [ "ec2.amazonaws.com" ] },
+                            "Action": [ "sts:AssumeRole" ]
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [ "arn:aws:iam::aws:policy/AmazonRoute53ReadOnlyAccess" ]
+            }
+        },
+
+        "IamProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [ {"Ref":"IamRole"} ]
+            }
+        },
+
+        "EIP": {
+            "Type": "AWS::EC2::EIP",
+            "DependsOn": [ "Vpc" ],
+            "Properties": { "Domain": "vpc" }
+        },
+
+        "SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Allow DNS queries and SSH access.",
+                "SecurityGroupEgress": [
+                    { "IpProtocol": "-1", "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "-1" }
+                ],
+                "SecurityGroupIngress": [
+                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "0", "ToPort": "-1" },
+                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "3", "ToPort": "-1" },
+                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "8", "ToPort": "-1" },
+                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort": "11", "ToPort": "-1" },
+                    { "IpProtocol": "udp",  "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "53" },
+                    { "IpProtocol": "tcp",  "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "53" },
+                    { "IpProtocol": "tcp",  "CidrIp": {"Ref":"SshCidrRange"}, "FromPort": "-1", "ToPort": "22" }
+                ]
+            }
+        },
+
+        "LaunchConfig": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "AssociatePublicIpAddress": "true",
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/sda1",
+                        "Ebs": {
+                            "DeleteOnTermination": "true",
+                            "VolumeSize": "20",
+                            "VolumeType": "gp2"
+                        }
+                    }
+                ],
+                "IamInstanceProfile": {"Ref":"IamProfile"},
+                "ImageId": { "Fn::FindInMap": ["AmazonLinux", {"Ref":"AWS::Region"}, "HVM64"] },
+                "InstanceMonitoring": "true",
+                "InstanceType": {"Ref":"InstanceType"},
+                "KeyName": {"Ref":"KeyName"},
+                "SecurityGroups": [ {"Ref":"SecurityGroup"} ],
+                "UserData": {"Fn::Base64": {"Fn::Join": ["\n", [
+                    "#!/bin/bash",
+                    "yum -y update",
+                    "curl -o /usr/bin/cli53 https://github.com/barnybug/cli53/releases/download/0.7.4/cli53-linux-amd64",
+                    "chmod 555 /usr/bin/cli53",
+                    ""
+                    ]]}}
+            }
+        }
+    }
+}
