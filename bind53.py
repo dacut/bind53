@@ -107,45 +107,52 @@ class DNSAliasRecord(DNSRecord):
                      self.pending_resolve_count, self.next_resolution_time,
                      self.values))
 
-def get_route53_records(hosted_zone_id, profile_name=None):
+def get_route53_records(zone_name, profile_name=None):
     """
     Returns the Route53 records for a given hosted zone.
     """
     session = Session(profile_name=profile_name)
     r53 = session.client("route53")
 
-    kw = {"HostedZoneId": hosted_zone_id, "MaxItems": "2"}
+    hosted_zones_result = r53.list_hosted_zones_by_name(DNSName=zone_name)
     records = []
 
-    while True:
-        results = r53.list_resource_record_sets(**kw)
-        for rrs in results["ResourceRecordSets"]:
-            name = rrs["Name"]
-            query_type = rrs["Type"]
-            ttl = rrs.get("TTL")
-
-            if "ResourceRecords" in rrs:
-                values = [rs["Value"] for rs in rrs["ResourceRecords"]]
-                record = DNSRecord(name, query_type, ttl, values)
-                log.debug("Received Route53 record for %s: %s", name, values)
-            elif "AliasTarget" in rrs:
-                atgt = rrs["AliasTarget"]
-                target = atgt["DNSName"]
-                record = DNSAliasRecord(name, ttl, target)
-                log.debug("Received Route53 alias record for %s: %s",
-                          name, target)
-
-            records.append(record)
-
-        if not results["IsTruncated"]:
+    for zone in hosted_zones_result["HostedZones"]:
+        if zone["Name"] != zone_name:
             break
 
-        kw["StartRecordName"] = results["NextRecordName"]
-        kw["StartRecordType"] = results["NextRecordType"]
-        if "NextRecordIdentifier" in results:
-            kw["StartRecordIdentifier"] = results["NextRecordIdentifier"]
-        else:
-            kw.pop("StartRecordIdentifier", None)
+        zone_id = zone["Id"]
+        kw = {"HostedZoneId": zone_id, "MaxItems": "100"}
+
+        while True:
+            results = r53.list_resource_record_sets(**kw)
+            for rrs in results["ResourceRecordSets"]:
+                name = rrs["Name"]
+                query_type = rrs["Type"]
+                ttl = rrs.get("TTL")
+
+                if "ResourceRecords" in rrs:
+                    values = [rs["Value"] for rs in rrs["ResourceRecords"]]
+                    record = DNSRecord(name, query_type, ttl, values)
+                    log.debug("Received Route53 record for %s: %s", name, values)
+                elif "AliasTarget" in rrs:
+                    atgt = rrs["AliasTarget"]
+                    target = atgt["DNSName"]
+                    record = DNSAliasRecord(name, ttl, target)
+                    log.debug("Received Route53 alias record for %s: %s",
+                              name, target)
+
+                records.append(record)
+
+            if not results["IsTruncated"]:
+                break
+
+            kw["StartRecordName"] = results["NextRecordName"]
+            kw["StartRecordType"] = results["NextRecordType"]
+            if "NextRecordIdentifier" in results:
+                kw["StartRecordIdentifier"] = results["NextRecordIdentifier"]
+            else:
+                kw.pop("StartRecordIdentifier", None)
 
     return records
 
@@ -168,6 +175,58 @@ def resolve_alias_records(records):
             records.append(record)
 
     return
+
+def process_zone(zone_name, output_filename, profile_name=None):
+    """
+    Write the records for a hosted zone to a file.
+    """
+    zone_name = zone_name.lower()
+    if not zone_name.endswith("."):
+        zone_name += "."
+    records = get_route53_records(zone_name, profile_name=profile_name)
+
+    if len(records) == 0:
+        log.error("No records for zone %s; will not write zone file.",
+                  zone_name)
+        return False
+
+    # Find the SOA record
+    soa_records = [r for r in records if r.record_type == "SOA"]
+    if len(soa_records) == 0:
+        log.error("No SOA record for zone %s; will not write zone file.",
+                  zone_name)
+        return False
+
+    if len(soa_records) > 1:
+        log.error("Multiple SOA records for zone %s; will not write zone "
+                  "file.", zone_name)
+        return False
+
+    alias_records = [r for r in records if isinstance(r, DNSAliasRecord)]
+    resolve_alias_records(alias_records)
+
+    if output_filename:
+        fd = open(output_filename % {"zone_name": zone_name}, "w")
+    else:
+        fd = stdout
+
+    fd.write("$ORIGIN %s\n" % zone_name)
+
+    # Write the SOA record first
+    fd.write(soa_records[0].bind_config)
+
+    for r in records:
+        if r.record_type == "SOA":
+            # Already printed; skip it.
+            continue
+
+        fd.write(r.bind_config)
+
+    if fd is not stdout:
+        fd.close()
+
+    return True
+
 
 def main(args):
     """
@@ -203,49 +262,42 @@ def main(args):
         print("Missing zone id.", file=stderr)
         usage()
         return 1
-    elif len(args) > 1:
-        print("Unknown argument %r." % args[1], file=stderr)
-        usage()
-        return 1
 
-    records = get_route53_records(args[0], profile_name=profile_name)
+    errors = 0
 
-    alias_records = [r for r in records if isinstance(r, DNSAliasRecord)]
-    resolve_alias_records(alias_records)
+    for zone_name in args:
+        log.info("Processing hosted zone %s", zone_name)
+        try:
+            if not process_zone(zone_name, output_filename, profile_name):
+                errors += 1
+        except Exception as e: # pylint: disable=W0703
+            log.error("Failed to process hosted zone %s: %s", zone_name, e,
+                      exc_info=True)
+            errors += 1
 
-    if output_filename:
-        fd = open(output_filename, "w")
-    else:
-        fd = stdout
+    if errors:
+        print("%d error(s) encountered." % errors, file=stderr)
 
-    # Find the SOA record
-    soa = [r for r in records if r.record_type == "SOA"][0]
-    fd.write(soa.bind_config)
-
-    for r in records:
-        if r.record_type == "SOA":
-            # Already printed; skip it.
-            continue
-
-        fd.write(r.bind_config)
-
-    if fd is not stdout:
-        fd.close()
-
-    return 0
+    return min(errors, 127)
 
 def usage(fd=stderr):
     "Print usage information."
     fd.write("""\
-Usage: %(argv0)s [options] <zone_id>
+Usage: %(argv0)s [options] <zone_name> [<zone_name> ...]
 Convert a Route 53 hosted zone to a BIND zone file.
 
 Options:
     -h | --help
         Print this usage information.
 
+    -k | --kick
+        Restart (kick) the BIND server after writing the zone files. This is
+        done only if all hosted zones were successfully retrieved.
+
     -o <filename> | --output <filename>
         Write output to the given file. Defaults to stdout.
+        This may contain %(zone_zone)s, which will be replaced with the
+        zone name.
 
     -p <name> | --profile <name>
         Use the specified AWS CLI/Boto profile for access/secret keys.
