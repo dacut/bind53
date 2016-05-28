@@ -243,7 +243,7 @@ def update_bind_config(bind_config, zone_names, output_filename):
         for zone_name in zone_names:
             zone_filename = output_filename % {"zone_name": zone_name}
             fd.write('zone "%s" IN {\n' % zone_name)
-            fd.write('    type master;')
+            fd.write('    type master;\n')
             fd.write('    file "%s";\n' % zone_filename)
             fd.write('};\n\n')
 
