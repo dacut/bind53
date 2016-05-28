@@ -329,7 +329,8 @@ def main(args):
     if not errors:
         try:
             update_bind_config(bind_config, zone_names, output_filename)
-            kick_named() if kick else None
+            if kick:
+                kick_named()
         except Exception as e: # pylint: disable=W0703
             log.error("Failed to restart named: %s", e, exc_info=True)
             errors += 1
