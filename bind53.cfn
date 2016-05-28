@@ -114,7 +114,7 @@
             "Properties": { "Domain": "vpc" }
         },
 
-        "LaunchConfig": {
+        "LaunchConfig_1": {
             "Type": "AWS::AutoScaling::LaunchConfiguration",
             "DependsOn": [ "EIP" ],
             "Properties": {
@@ -166,7 +166,7 @@
 
         "AutoScalingGroup": {
             "Type": "AWS::AutoScaling::AutoScalingGroup",
-            "DependsOn": [ "LaunchConfig" ],
+            "DependsOn": [ "LaunchConfig_1" ],
             "Properties": {
                 "DesiredCapacity": "1",
                 "LaunchConfigurationName": {"Ref":"LaunchConfig"},
@@ -174,6 +174,13 @@
                 "MinSize": "1",
                 "Tags": [ {"Key": "Name", "Value": "Bind53", "PropagateAtLaunch": "true" }],
                 "VPCZoneIdentifier": {"Ref":"SubnetIds"}
+            },
+            "UpdatePolicy": {
+                "AutoScalingRollingUpdate": {
+                    "MaxBatchSize": "10",
+                    "MinInstancesInService": "0",
+
+                }
             }
         }
     },
