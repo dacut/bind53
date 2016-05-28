@@ -145,7 +145,7 @@
                     ".EOF\n",
                     "yum -y update\n",
                     "yum -y install bind git\n",
-                    "sed -e 's/listen-on .*/listen-on port 53 { any; };/' -e 's/listen-on-v6.*/listen-on-v6 port 53 { any; }/' -e 's/allow-query .*/allow-query { any; }/' /etc/named.conf > /etc/named.conf.new\n",
+                    "sed -e 's/listen-on .*/listen-on port 53 { any; };/' -e 's/listen-on-v6.*/listen-on-v6 port 53 { any; };/' -e 's/allow-query .*/allow-query { any; };/' /etc/named.conf > /etc/named.conf.new\n",
                     "echo 'include \"/etc/bind53.conf\";' >> /etc/named.conf.new\n",
                     "mv /etc/named.conf /etc/named.conf.orig\n",
                     "mv /etc/named.conf.new /etc/named.conf\n",
