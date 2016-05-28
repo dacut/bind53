@@ -126,6 +126,7 @@
                     ".EOF\n",
                     "yum -y update\n",
                     "yum -y install bind git\n",
+                    "echo 'include \"/etc/bind53.conf\"' >> /etc/named.conf\n"
                     "cd /tmp\n",
                     "git clone 'https://github.com/dacut/bind53.git'\n",
                     "cd bind53\n",
