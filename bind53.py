@@ -3,12 +3,15 @@
 Convert Route53 resource record sets to bind configuration.
 """
 
-# pylint: disable=C0103,C0111,R0204,R0903,R0913,R0914
+# pylint: disable=C0103,C0111,C0411,R0204,R0903,R0912,R0913,R0914
 from __future__ import absolute_import, print_function
 from getopt import getopt, GetoptError
 from logging import basicConfig, getLogger, DEBUG, WARNING
+from os import rename, unlink
+from os.path import exists
+from subprocess import PIPE, Popen
 from sys import argv, exit as sys_exit, stderr, stdout
-from time import sleep, time
+from time import asctime, sleep, time
 
 from boto3.session import Session
 from dns.resolver import NXDOMAIN, query as dns_query
@@ -108,54 +111,50 @@ class DNSAliasRecord(DNSRecord):
                      self.pending_resolve_count, self.next_resolution_time,
                      self.values))
 
-def get_route53_records(zone_name, profile_name=None):
+def get_route53_records(zone_id, profile_name=None):
     """
     Returns the Route53 records for a given hosted zone.
     """
     session = Session(profile_name=profile_name)
     r53 = session.client("route53")
 
-    hosted_zones_result = r53.list_hosted_zones_by_name(DNSName=zone_name)
+    hosted_zone = r53.get_hosted_zone(Id=zone_id)
+    zone_name = hosted_zone["HostedZone"]["Name"]
     records = []
 
-    for zone in hosted_zones_result["HostedZones"]:
-        if zone["Name"] != zone_name:
+    kw = {"HostedZoneId": zone_id, "MaxItems": "100"}
+
+    while True:
+        results = r53.list_resource_record_sets(**kw)
+        for rrs in results["ResourceRecordSets"]:
+            name = rrs["Name"]
+            query_type = rrs["Type"]
+            ttl = rrs.get("TTL")
+
+            if "ResourceRecords" in rrs:
+                values = [rs["Value"] for rs in rrs["ResourceRecords"]]
+                record = DNSRecord(name, query_type, ttl, values)
+                log.debug("Received Route53 record for %s: %s", name, values)
+            elif "AliasTarget" in rrs:
+                atgt = rrs["AliasTarget"]
+                target = atgt["DNSName"]
+                record = DNSAliasRecord(name, ttl, target)
+                log.debug("Received Route53 alias record for %s: %s",
+                          name, target)
+
+            records.append(record)
+
+        if not results["IsTruncated"]:
             break
 
-        zone_id = zone["Id"]
-        kw = {"HostedZoneId": zone_id, "MaxItems": "100"}
+        kw["StartRecordName"] = results["NextRecordName"]
+        kw["StartRecordType"] = results["NextRecordType"]
+        if "NextRecordIdentifier" in results:
+            kw["StartRecordIdentifier"] = results["NextRecordIdentifier"]
+        else:
+            kw.pop("StartRecordIdentifier", None)
 
-        while True:
-            results = r53.list_resource_record_sets(**kw)
-            for rrs in results["ResourceRecordSets"]:
-                name = rrs["Name"]
-                query_type = rrs["Type"]
-                ttl = rrs.get("TTL")
-
-                if "ResourceRecords" in rrs:
-                    values = [rs["Value"] for rs in rrs["ResourceRecords"]]
-                    record = DNSRecord(name, query_type, ttl, values)
-                    log.debug("Received Route53 record for %s: %s", name, values)
-                elif "AliasTarget" in rrs:
-                    atgt = rrs["AliasTarget"]
-                    target = atgt["DNSName"]
-                    record = DNSAliasRecord(name, ttl, target)
-                    log.debug("Received Route53 alias record for %s: %s",
-                              name, target)
-
-                records.append(record)
-
-            if not results["IsTruncated"]:
-                break
-
-            kw["StartRecordName"] = results["NextRecordName"]
-            kw["StartRecordType"] = results["NextRecordType"]
-            if "NextRecordIdentifier" in results:
-                kw["StartRecordIdentifier"] = results["NextRecordIdentifier"]
-            else:
-                kw.pop("StartRecordIdentifier", None)
-
-    return records
+    return zone_name, records
 
 def resolve_alias_records(records):
     """
@@ -177,14 +176,11 @@ def resolve_alias_records(records):
 
     return
 
-def process_zone(zone_name, output_filename, profile_name=None):
+def process_zone(zone_id, output_filename, profile_name=None):
     """
     Write the records for a hosted zone to a file.
     """
-    zone_name = zone_name.lower()
-    if not zone_name.endswith("."):
-        zone_name += "."
-    records = get_route53_records(zone_name, profile_name=profile_name)
+    zone_name, records = get_route53_records(zone_id, profile_name=profile_name)
 
     if len(records) == 0:
         log.error("No records for zone %s; will not write zone file.",
@@ -194,14 +190,12 @@ def process_zone(zone_name, output_filename, profile_name=None):
     # Find the SOA record
     soa_records = [r for r in records if r.record_type == "SOA"]
     if len(soa_records) == 0:
-        log.error("No SOA record for zone %s; will not write zone file.",
-                  zone_name)
-        return False
+        raise ValueError(
+            "No SOA record for zone %s; will not write zone file." % zone_name)
 
     if len(soa_records) > 1:
-        log.error("Multiple SOA records for zone %s; will not write zone "
-                  "file.", zone_name)
-        return False
+        raise ValueError("Multiple SOA records for zone %s; will not write "
+                         "zone file." % zone_name)
 
     alias_records = [r for r in records if isinstance(r, DNSAliasRecord)]
     resolve_alias_records(alias_records)
@@ -226,7 +220,50 @@ def process_zone(zone_name, output_filename, profile_name=None):
     if fd is not stdout:
         fd.close()
 
-    return True
+    return zone_name
+
+
+def update_bind_config(bind_config, zone_names, zone_filename):
+    if exists(bind_config):
+        old_bind_config = bind_config + ".old"
+
+        if exists(old_bind_config):
+            unlink(old_bind_config)
+
+        rename(bind_config, old_bind_config)
+
+    with open(bind_config, "w") as fd:
+        for zone_name in zone_names:
+            fd.write('# Generated by bind53 at %s\n' % asctime())
+            fd.write('zone "%s" {\n' % zone_name)
+            fd.write('    file "%s";' % zone_filename)
+            fd.write('};\n\n')
+
+def kick_named():
+    proc = Popen(["/sbin/service", "named", "reload"], stdout=PIPE, stderr=PIPE)
+    out, err = proc.communicate()
+    if out:
+        for line in out.split("\n"):
+            log.debug("/sbin/service named reload stdout: %s", line)
+    if err:
+        for line in err.split("\n"):
+            log.warning("/sbin/service named reload stderr: %s", line)
+
+    if proc.returncode == 0:
+        return
+
+    proc = Popen(["/sbin/service", "named", "restart"], stdout=PIPE,
+                 stderr=PIPE)
+    out, err = proc.communicate()
+    if out:
+        for line in out.split("\n"):
+            log.debug("/sbin/service named restart stdout: %s", line)
+    if err:
+        for line in err.split("\n"):
+            log.warning("/sbin/service named restart stderr: %s", line)
+
+    if proc.returncode != 0:
+        raise ValueError(err)
 
 
 def main(args):
@@ -235,6 +272,9 @@ def main(args):
     """
     profile_name = None
     output_filename = None
+    bind_config = "/etc/bind53.conf"
+    kick = False
+    zone_names = []
 
     basicConfig(format="%(asctime)s %(levelname)s %(name)s "
                        "%(filename)s:%(lineno)d: %(message)s",
@@ -244,16 +284,23 @@ def main(args):
     getLogger("botocore").setLevel(WARNING)
 
     try:
-        opts, args = getopt(args, "ho:p:", ["help", "output=", "profile="])
+        opts, args = getopt(
+            args, "c:hko:p:",
+            ["bind-config=", "named-config=", "help", "kick", "output=",
+             "profile="])
     except GetoptError as e:
         print(e, file=stderr)
         usage()
         return 1
 
     for opt, val in opts:
-        if opt in ("-h", "--help",):
+        if opt in ("-c", "--bind-config", "--named-config",):
+            bind_config = val
+        elif opt in ("-h", "--help",):
             usage(stdout)
             return 0
+        elif opt in ("-k", "--kick",):
+            kick = True
         elif opt in ("-o", "--output",):
             output_filename = val
         elif opt in ("-p", "--profile",):
@@ -266,34 +313,50 @@ def main(args):
 
     errors = 0
 
-    for zone_name in args:
-        log.info("Processing hosted zone %s", zone_name)
+    for zone_id in args:
+        log.info("Processing hosted zone %s", zone_id)
         try:
-            if not process_zone(zone_name, output_filename, profile_name):
-                errors += 1
+            zone_name = process_zone(zone_id, output_filename, profile_name)
+            zone_names.append(zone_name)
         except Exception as e: # pylint: disable=W0703
-            log.error("Failed to process hosted zone %s: %s", zone_name, e,
+            log.error("Failed to process hosted zone %s: %s", zone_id, e,
                       exc_info=True)
             errors += 1
 
     if errors:
-        print("%d error(s) encountered." % errors, file=stderr)
+        log.error("%d error(s) encountered.", errors)
+    else:
+        log.info("No errors encountered.")
+        update_bind_config(bind_config, zone_names,
+                           output_filename % {"zone_name": zone_name})
+        if kick:
+            try:
+                kick_named()
+            except Exception as e: # pylint: disable=W0703
+                log.error("Failed to restart named: %s", e, exc_info=True)
 
     return min(errors, 127)
 
 def usage(fd=stderr):
     "Print usage information."
     fd.write("""\
-Usage: %(argv0)s [options] <zone_name> [<zone_name> ...]
-Convert a Route 53 hosted zone to a BIND zone file.
+Usage: %(argv0)s [options] <zone_id> [<zone_id> ...]
+Convert Route 53 hosted zones to BIND zone files.
 
 Options:
+    -c <filename> | --bind-config <filename> | --named-config <filename>
+        The BIND configuration file to edit. Defaults to /etc/bind53.conf.
+
     -h | --help
         Print this usage information.
 
+    -k | --kick
+        Restart the BIND server after writing the zone files. This is done
+        only if no errors are encountered.
+
     -o <filename> | --output <filename>
         Write output to the given file. Defaults to stdout.
-        This may contain %(zone_zone)s, which will be replaced with the
+        This may contain %%(zone_name)s, which will be replaced with the
         zone name.
 
     -p <name> | --profile <name>

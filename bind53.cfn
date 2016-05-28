@@ -29,41 +29,19 @@
             "MinLength": "1"
         },
 
-        "HostedZones": {
-            "Type": "String",
-            "Description": "A comma-separated list of DNS domains to host from Route 53.",
-            "MinLength": "4"
+        "HostedZoneIds": {
+            "Type": "List<AWS::Route53::HostedZone::Id>",
+            "Description": "The hosted zones to read from Route 53."
         },
 
-        "VpcName": {
-            "Type": "String",
-            "Description": "Name of the VPC to create.",
-            "MinLength": "1",
-            "Default": "Bind53"
+        "SubnetIds": {
+            "Type": "List<AWS::EC2::Subnet::Id>",
+            "Description": "The subnets the instance may launch in."
         },
 
-        "VpcCidrBlock": {
-            "Type": "String",
-            "Description": "The network CIDR range to use for the VPC.",
-            "Default": "192.168.188.0/24"
-        },
-
-        "Subnet1CidrBlock": {
-            "Type": "String",
-            "Description": "The network CIDR range to use for the first subnet.",
-            "Default": "192.168.188.0/25"
-        },
-
-        "Subnet2CidrBlock": {
-            "Type": "String",
-            "Description": "The network CIDR range to use for the second subnet.",
-            "Default": "192.168.188.128/25"
-        },
-
-        "SshCidrRange": {
-            "Type": "String",
-            "Description": "The network CIDR range that can access the SSH port.",
-            "Default": "192.174.32.0/19"
+        "SecurityGroupIds": {
+            "Type": "List<AWS::EC2::SecurityGroup::Id>",
+            "Description": "The security groups to attach to the instance."
         },
 
         "InstanceType": {
@@ -87,73 +65,6 @@
     },
 
     "Resources": {
-        "Vpc": {
-            "Type": "AWS::EC2::VPC",
-            "Properties": {
-                "CideBlock": { "Ref": "VpcCidrBlock" },
-                "EnableDnsSupport": "true",
-                "EnableDnsHostnames": "true",
-                "InstanceTenancy": "default",
-                "Tags": [ { "Key": "Name", "Value": {"Ref":"VpcName"} } ]
-            }
-        },
-
-        "VpcIgw": {
-            "Type": "AWS::EC2::InternetGateway",
-            "Properties": {
-                "Tags": [
-                    {
-                        "Key": "Name",
-                        "Value": { "Fn::Join": [ "", "IGW for ", {"Ref":"VpcName"} ] }
-                    }
-                ]
-            }
-        },
-
-        "VpcIgwAttachment": {
-            "Type": "AWS::EC2::VPCGatewayAttachment",
-            "Properties": {
-                "InternetGatewayId": {"Ref":"VpcIgw"},
-                "VpcId": {"Ref":"Vpc"}
-            }
-        },
-
-        "Subnet1": {
-            "Type": "AWS::EC2::Subnet",
-            "Properties": {
-                "AvailabilityZone": { "Fn::Join": [ "", [ {"Ref":"AWS::Region"}, "a" ] ] },
-                "CidrBlock": { "Ref": "Subnet1CidrBlock" },
-                "MapPublicIpOnLaunch": "false",
-                "VpcId": { "Ref": "VPC" }
-            }
-        },
-
-        "Subnet2": {
-            "Type": "AWS::EC2::Subnet",
-            "Properties": {
-                "AvailabilityZone": { "Fn::Join": [ "", [ {"Ref":"AWS::Region"}, "b" ] ] },
-                "CidrBlock": {"Ref":"Subnet2CidrBlock"},
-                "MapPublicIpOnLaunch": "false",
-                "VpcId": {"Ref":"VPC"}
-            }
-        },
-
-        "VpcRouteTable": {
-            "Type": "AWS::EC2::RouteTable",
-            "Properties": {
-                "VpcId": {"Ref":"Vpc"}
-            }
-        },
-
-        "VpcInternetRoute": {
-            "Type": "AWS::EC2::Route",
-            "Properties": {
-                "DestinationCidrBlock": "0.0.0.0/0",
-                "GatewayId": {"Ref":"VpcIgw"},
-                "RouteTableId": {"Ref":"VpcRouteTable"}
-            }
-        },
-
         "IamRole": {
             "Type": "AWS::IAM::Role",
             "Properties": {
@@ -181,36 +92,17 @@
 
         "EIP": {
             "Type": "AWS::EC2::EIP",
-            "DependsOn": [ "Vpc" ],
             "Properties": { "Domain": "vpc" }
-        },
-
-        "SecurityGroup": {
-            "Type": "AWS::EC2::SecurityGroup",
-            "Properties": {
-                "GroupDescription": "Allow DNS queries and SSH access.",
-                "SecurityGroupEgress": [
-                    { "IpProtocol": "-1", "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "-1" }
-                ],
-                "SecurityGroupIngress": [
-                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "0", "ToPort": "-1" },
-                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "3", "ToPort": "-1" },
-                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort":  "8", "ToPort": "-1" },
-                    { "IpProtocol": "icmp", "CidrIp": "0.0.0.0/0", "FromPort": "11", "ToPort": "-1" },
-                    { "IpProtocol": "udp",  "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "53" },
-                    { "IpProtocol": "tcp",  "CidrIp": "0.0.0.0/0", "FromPort": "-1", "ToPort": "53" },
-                    { "IpProtocol": "tcp",  "CidrIp": {"Ref":"SshCidrRange"}, "FromPort": "-1", "ToPort": "22" }
-                ]
-            }
         },
 
         "LaunchConfig": {
             "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "DependsOn": [ "EIP" ],
             "Properties": {
                 "AssociatePublicIpAddress": "true",
                 "BlockDeviceMappings": [
                     {
-                        "DeviceName": "/dev/sda1",
+                        "DeviceName": "/dev/xvda",
                         "Ebs": {
                             "DeleteOnTermination": "true",
                             "VolumeSize": "20",
@@ -223,15 +115,53 @@
                 "InstanceMonitoring": "true",
                 "InstanceType": {"Ref":"InstanceType"},
                 "KeyName": {"Ref":"KeyName"},
-                "SecurityGroups": [ {"Ref":"SecurityGroup"} ],
-                "UserData": {"Fn::Base64": {"Fn::Join": ["\n", [
-                    "#!/bin/bash",
-                    "yum -y update",
-                    "curl -o /usr/bin/cli53 https://github.com/barnybug/cli53/releases/download/0.7.4/cli53-linux-amd64",
-                    "chmod 555 /usr/bin/cli53",
+                "SecurityGroups": {"Ref":"SecurityGroupIds"},
+                "UserData": {"Fn::Base64": {"Fn::Join": ["", [
+                    "#!/bin/bash\n",
+                    "md='http://169.254.169.254/latest/meta-data'\n",
+                    "mkdir -p /root/.aws\n",
+                    "cat > /root/.aws/config <<.EOF\n",
+                    "[default]\n",
+                    "region = ", {"Ref":"AWS::Region"}, "\n",
+                    ".EOF\n",
+                    "yum -y update\n",
+                    "yum -y install bind git\n",
+                    "cd /tmp\n",
+                    "git clone 'https://github.com/dacut/bind53.git'\n",
+                    "cd bind53\n",
+                    "./setup.py install\n",
+                    "cd /tmp\n",
+                    "rm -r /tmp/bind53\n",
+                    "crontab - <<.EOF\n",
+                    "*/5 * * * * /usr/local/bin/bind53 --kick ",
+                    {"Fn::Join": [" ", {"Ref":"HostedZoneIds"}]}, "\n",
+                    ".EOF\n",
+                    "iid=`curl -s $md/instance-id`\n",
+                    "aws ec2 associate-address --instance-id $iid --allocation-id ", {"Ref":"EIP"}, " --allow-reassociation\n",
+                    "service named start\n",
                     ""
                     ]]}}
             }
+        },
+
+        "AutoScalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "DependsOn": [ "LaunchConfig" ],
+            "Properties": {
+                "DesiredCapacity": "1",
+                "LaunchConfigurationName": {"Ref":"LaunchConfig"},
+                "MaxSize": "1",
+                "MinSize": "1",
+                "Tags": [ {"Key": "Name", "Value": "Bind53", "PropagateAtLaunch": "true" }],
+                "VPCZoneIdentifier": {"Ref":"SubnetIds"}
+            }
+        }
+    },
+
+    "Outputs": {
+        "PublicIP": {
+            "Description": "Elasitc IP allocation for the BIND server",
+            "Value": {"Fn::GetAtt":["EIP", "AllocationId"]}
         }
     }
 }
