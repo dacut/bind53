@@ -78,7 +78,26 @@
                         }
                     ]
                 },
-                "ManagedPolicyArns": [ "arn:aws:iam::aws:policy/AmazonRoute53ReadOnlyAccess" ]
+                "Policies": [{
+                    "PolicyName": "Bind53",
+                    "PolicyDocument": {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Sid": "Route53Actions",
+                                "Effect": "Allow",
+                                "Action": [ "Route53:GetHostedZone", "Route53:ListResourceRecordSets" ],
+                                "Resource": "*"
+                            },
+                            {
+                                "Sid": "EIPActions",
+                                "Effect": "Allow",
+                                "Action": [ "ec2:AssocateAddress" ],
+                                "Resource": "*"
+                            }
+                        ]
+                    }
+                }]
             }
         },
 
@@ -126,7 +145,7 @@
                     ".EOF\n",
                     "yum -y update\n",
                     "yum -y install bind git\n",
-                    "echo 'include \"/etc/bind53.conf\"' >> /etc/named.conf\n",
+                    "echo 'include \"/etc/bind53.conf\";' >> /etc/named.conf\n",
                     "cd /tmp\n",
                     "git clone 'https://github.com/dacut/bind53.git'\n",
                     "cd bind53\n",
