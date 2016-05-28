@@ -86,13 +86,13 @@
                             {
                                 "Sid": "Route53Actions",
                                 "Effect": "Allow",
-                                "Action": [ "Route53:GetHostedZone", "Route53:ListResourceRecordSets" ],
+                                "Action": [ "route53:GetHostedZone", "route53:ListResourceRecordSets" ],
                                 "Resource": "*"
                             },
                             {
                                 "Sid": "EIPActions",
                                 "Effect": "Allow",
-                                "Action": [ "ec2:AssocateAddress" ],
+                                "Action": [ "ec2:AssociateAddress" ],
                                 "Resource": "*"
                             }
                         ]
