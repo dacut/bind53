@@ -51,6 +51,11 @@ class DNSRecord(object):
                 email = parts[1]
                 soa_values = parts[2:]
                 result.write("%s %s (%s)" % (ns, email, " ".join(soa_values)))
+            elif self.record_type == "NS":
+                if "." in value and not value.endswith("."):
+                    # Some Route 53 NS records are missing the terminating .
+                    value += "."
+                result.write(value)
             else:
                 result.write(value)
 
