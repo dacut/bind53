@@ -114,7 +114,7 @@
             "Properties": { "Domain": "vpc" }
         },
 
-        "LaunchConfig_1": {
+        "LaunchConfig1": {
             "Type": "AWS::AutoScaling::LaunchConfiguration",
             "DependsOn": [ "EIP" ],
             "Properties": {
@@ -166,7 +166,7 @@
 
         "AutoScalingGroup": {
             "Type": "AWS::AutoScaling::AutoScalingGroup",
-            "DependsOn": [ "LaunchConfig_1" ],
+            "DependsOn": [ "LaunchConfig1" ],
             "Properties": {
                 "DesiredCapacity": "1",
                 "LaunchConfigurationName": {"Ref":"LaunchConfig"},
