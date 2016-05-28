@@ -178,8 +178,7 @@
             "UpdatePolicy": {
                 "AutoScalingRollingUpdate": {
                     "MaxBatchSize": "10",
-                    "MinInstancesInService": "0",
-
+                    "MinInstancesInService": "0"
                 }
             }
         }
