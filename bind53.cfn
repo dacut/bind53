@@ -146,12 +146,13 @@
                     "[default]\n",
                     "region = ", {"Ref":"AWS::Region"}, "\n",
                     ".EOF\n",
-                    "# Reassociate the EIP to us.\n"
+                    "# Reassociate the EIP to us.\n",
+                    "iid=`curl -s $md/instance-id`\n",
                     "aws ec2 associate-address --instance-id $iid --allocation-id ",
                     {"Fn::GetAtt": ["EIP", "AllocationId"]}, " --allow-reassociation\n",
                     "# Update OS packages\n",
                     "yum -y update\n",
-                    "# Install BIND and Git\n"
+                    "# Install BIND and Git\n",
                     "yum -y install bind git\n",
                     "# Fix BIND configuration\n",
                     "sed -e 's/listen-on .*/listen-on port 53 { any; };/' ",
@@ -179,7 +180,6 @@
                     "*/5 * * * * /usr/local/bin/bind53 --output '/var/named/\\%(zone_name)szone' --kick ",
                     {"Fn::Join": [" ", {"Ref":"HostedZoneIds"}]}, " >> /var/log/bind53.log 2>&1\n",
                     ".EOF\n",
-                    "iid=`curl -s $md/instance-id`\n",
                     "# Restart BIND\n",
                     "service named restart\n",
                     ""
