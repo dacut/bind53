@@ -158,7 +158,7 @@
                     "sed -e 's/listen-on .*/listen-on port 53 { any; };/' ",
                     "-e 's/listen-on-v6.*/listen-on-v6 port 53 { any; };/' ",
                     "-e 's/allow-query .*/allow-query { any; };/' ",
-                    "-e 's/recursion yes;//' ",
+                    "-e 's/recursion yes;/recursion no;/' ",
                     "/etc/named.conf > /etc/named.conf.new\n",
                     "echo 'include \"/etc/bind53.conf\";' >> /etc/named.conf.new\n",
                     "mv /etc/named.conf /etc/named.conf.orig\n",
